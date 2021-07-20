@@ -3,14 +3,127 @@ use rand::Rng;
 
 use std::collections::HashSet;
 
+pub struct GroupRNG {
+    gens: Vec<Perm>,
+    n: usize,
+    id: Perm,
+    rng: rand::rngs::ThreadRng
+}
 
+impl GroupRNG {
+    pub fn new(g: &Group) -> GroupRNG {
+        GroupRNG {
+            gens: g.gens.clone(),
+            n: g.n,
+            id: g.id.clone(),
+            rng: rand::thread_rng()
+        }
+    } 
+
+    /// applies one step of the product replacement algorithm
+    fn step(&mut self) {
+        // following notation of https://www.math.ucla.edu/~pak/papers/what9.pdf
+        let i = self.rng.gen_range(0..(self.gens.len()));
+        let j = {
+          let v = self.rng.gen_range(0..(self.gens.len() - 1));
+          if v > i { v + 1 } else { v }
+        };
+        let pi = &self.gens[i];
+        let pj = &self.gens[j];
+        
+        let chooseR : bool = self.rng.gen_bool(0.5);
+        let chooseplus : bool = self.rng.gen_bool(0.5);
+        if chooseR {
+            if chooseplus {
+                self.gens[i] = pi.compose(&pj);
+            } else {
+                self.gens[i] = pi.compose(&pj.inv())
+            }
+        } else {
+            if chooseplus {
+                self.gens[i] = pj.compose(&pi);
+            } else {
+                self.gens[i] = pj.inv().compose(&pi);
+            }
+        }
+    }
+
+    fn draw(&mut self) -> Perm {
+        // use 4*n as number of steps, this seems pretty standard and is what GAP uses
+        for i in 0..(4*self.n) {
+            self.step();
+        }
+
+        // return a random generator
+        let i = self.rng.gen_range(0..(self.gens.len()));
+        self.gens[i].clone()
+    }
+}
+
+#[derive(Debug, Clone)]
+struct StabView<'a> {
+    g: Vec<&'a Perm>,
+    /// the set of stabilized points
+    base: Vec<usize>,
+    /// the next basis point (to be used for schreier)
+    point: usize,
+    id: &'a Perm,
+    schreier: Vec<Option<&'a Perm>>
+}
+
+impl<'a> StabView<'a> {
+    fn new(g: &'a Group, base: Vec<usize>, point: usize) -> StabView<'a> {
+        // pick out all generators that stabilize the current base point
+        let gens : Vec<&'a Perm> = g.gens.iter().filter(|g| 
+            base.iter().all(|p| 
+                g.apply(*p) == *p)
+            ).collect();
+
+        // now, build the schreier vector by inspecting how `gens` transforms `point`; this 
+        // is essentially an orbit computation
+        let mut s = vec![None; g.n];
+        let mut frontier = Vec::new();
+        s[point] = Some(g.id());
+        frontier.push(point);
+        while !frontier.is_empty() {
+            let top = frontier.pop().unwrap();
+            for g in gens.iter() {
+                let newp = g.apply(top);
+                if s[newp].is_none() { continue }
+                s[newp] = Some(g);
+                frontier.push(newp);
+            }
+        }
+
+        StabView { g: gens, base, schreier: s, point, id: g.id()}
+    }
+
+    /// Find the representative of g
+    pub fn repr(&self, g: &Perm) -> Perm {
+        // apply g to the point and return that entry
+        let mut curp = g.apply(self.point);
+        if self.schreier[curp].is_none() {
+            return self.id.clone();
+        }
+
+        let mut r = self.id.clone();
+        // work backwards until we are back at the original point
+        while curp != self.point {
+            let curg = self.schreier[curp].unwrap().inv();
+            curp = curg.apply(curp);
+            r = r.compose(&curg);
+        }
+        return r;
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct Group {
     /// vector of generators
     gens: Vec<Perm>, 
-     /// number of points
+    /// number of points
     n: usize,
+    /// identity element
     id: Perm,
 }
 
@@ -31,6 +144,28 @@ impl Group {
         &self.gens
     }
 
+    // strip the point according to the stabilizer chain
+    // returns the residue
+    fn strip(stabchain: &Vec<StabView>, g: Perm) -> Perm {
+        let mut curg = g;
+        for s in stabchain.iter() {
+            let curp = curg.apply(s.point);
+            if s.schreier[curp].is_none() {
+                return curg;
+            }
+            curg = curg.compose(&s.repr(&curg).inv())
+        }
+        return curg;
+    }
+    
+    pub fn random_schreier_sims(&mut self) -> () {
+        let mut count = 0;
+
+        // while count < 4 {
+
+        // }
+    }
+
     pub fn new(gens: Vec<Perm>) -> Group {
         assert!(gens.len() > 0);
         let l = gens[0].len();
@@ -40,24 +175,10 @@ impl Group {
         return Group {
             gens: gens,
             n: l,
-            id: Perm::id(l)
+            id: Perm::id(l),
         }
     }
 
-
-    /// applies one step of the product replacement algorithm
-    // pub fn rand_elem(&self) -> Perm {
-    //     // often 4*n is used as a number of steps; we will use this here
-    //     let mut rng = rand::thread_rng();
-    //     let i = rng.gen_range(0..(self.num_gens()));
-    //     let j = {
-    //       let v = rng.gen_range(0..(self.num_gens() - 1));
-    //       if v > i { v + 1 } else { v }
-    //     };
-        
-    //     // following notation of https://www.math.ucla.edu/~pak/papers/what9.pdf
-    //     let chooseR = 
-    // }
 
     pub fn orbit(&self, p: usize) -> HashSet<usize> {
         let mut frontier: Vec<usize> = Vec::new();
@@ -77,13 +198,6 @@ impl Group {
         }
         return orbit;
     }
-
-    // Computes generators for the stabilizer subgroup for the point `point`
-    // fn stabilizer(&self, point: usize) -> Group {
-    //     let sv = SchreierVector::new(self, point);
-    //     let coset_repr = sv.coset_repr();
-    //     let r : Vec<Perm> = Vec::new();
-    // }
 
     pub fn cyclic_group(n: usize) -> Group {
         let mut gen : Vec<usize> = (1..(n)).collect();

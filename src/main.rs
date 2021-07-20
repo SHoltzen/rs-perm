@@ -1,9 +1,9 @@
 pub mod perm;
 pub mod group;
 pub mod naive;
-pub mod stabchain;
 
 extern crate rand;
+extern crate bit_set;
 
 use perm::*;
 use group::*;
