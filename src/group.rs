@@ -395,11 +395,3 @@ fn test_schreier() {
     assert_eq!(g.sz(), 12 * 11 * 10 * 9 * 8*7*6*5*4*3*2);
 }
 
-#[test]
-fn test_schreier_rubiks() {
-    let mut g = Group::rubiks();
-    g.random_schreier_sims();
-    let sz = 3;
-    // let sz : usize = (2 as usize).pow(27) * (3 as usize).pow(14) * (5 as usize).pow(3) * (7 as usize).pow(2) * 11;
-    assert_eq!(g.sz(), sz);
-}
